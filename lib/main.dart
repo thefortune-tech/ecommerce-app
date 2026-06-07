@@ -1,121 +1,562 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:dio/dio.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'dart:convert';
 
-void main() {
-  runApp(const MyApp());
+// ─── Model ───────────────────────────────────────────────────────────────────
+
+class Product {
+  final int id;
+  final String title;
+  final double price;
+  final String description;
+  final String category;
+  final String image;
+
+  Product({
+    required this.id,
+    required this.title,
+    required this.price,
+    required this.description,
+    required this.category,
+    required this.image,
+  });
+
+  factory Product.fromJson(Map<String, dynamic> json) {
+    return Product(
+      id: json['id'],
+      title: json['title'],
+      price: (json['price'] as num).toDouble(),
+      description: json['description'],
+      category: json['category'],
+      image: json['image'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'price': price,
+      'description': description,
+      'category': category,
+      'image': image,
+    };
+  }
+}
+
+// ─── Service ─────────────────────────────────────────────────────────────────
+
+class ProductService {
+  final Dio _dio = Dio();
+
+  Future<List<Product>> getProducts() async {
+    final response = await _dio.get('https://fakestoreapi.com/products');
+    return (response.data as List)
+        .map((item) => Product.fromJson(item))
+        .toList();
+  }
+}
+
+// ─── Product Bloc ─────────────────────────────────────────────────────────────
+
+abstract class ProductEvent {}
+class FetchProducts extends ProductEvent {}
+
+abstract class ProductState {}
+class ProductInitial extends ProductState {}
+class ProductLoading extends ProductState {}
+class ProductLoaded extends ProductState {
+  final List<Product> products;
+  ProductLoaded(this.products);
+}
+class ProductError extends ProductState {
+  final String message;
+  ProductError(this.message);
+}
+
+class ProductBloc extends Bloc<ProductEvent, ProductState> {
+  final _service = ProductService();
+
+  ProductBloc() : super(ProductInitial()) {
+    on<FetchProducts>((event, emit) async {
+      emit(ProductLoading());
+      try {
+        final products = await _service.getProducts();
+        print('Products fetched: ${products.length}');
+        emit(ProductLoaded(products));
+      } catch (e) {
+        print('Error: $e');
+        emit(ProductError(e.toString()));
+      }
+    });
+  }
+}
+
+// ─── Cart Bloc ────────────────────────────────────────────────────────────────
+
+abstract class CartEvent {}
+class LoadCart extends CartEvent {}
+class AddToCart extends CartEvent {
+  final Product product;
+  AddToCart(this.product);
+}
+class RemoveFromCart extends CartEvent {
+  final int productId;
+  RemoveFromCart(this.productId);
+}
+
+abstract class CartState {}
+class CartInitial extends CartState {}
+class CartLoaded extends CartState {
+  final List<Product> items;
+  CartLoaded(this.items);
+}
+
+class CartBloc extends Bloc<CartEvent, CartState> {
+  static const String _boxName = 'cartBox';
+
+  CartBloc() : super(CartInitial()) {
+    on<LoadCart>((event, emit) async {
+      final box = await Hive.openBox(_boxName);
+      final items = box.values
+          .map((e) => Product.fromJson(jsonDecode(e)))
+          .toList();
+      emit(CartLoaded(items));
+    });
+
+    on<AddToCart>((event, emit) async {
+      final box = await Hive.openBox(_boxName);
+      await box.put(event.product.id, jsonEncode(event.product.toJson()));
+      final items = box.values
+          .map((e) => Product.fromJson(jsonDecode(e)))
+          .toList();
+      emit(CartLoaded(items));
+    });
+
+    on<RemoveFromCart>((event, emit) async {
+      final box = await Hive.openBox(_boxName);
+      await box.delete(event.productId);
+      final items = box.values
+          .map((e) => Product.fromJson(jsonDecode(e)))
+          .toList();
+      emit(CartLoaded(items));
+    });
+  }
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  runApp(
+    MultiBlocProvider(
+      providers: [
+        BlocProvider(create: (_) => ProductBloc()..add(FetchProducts())),
+        BlocProvider(create: (_) => CartBloc()..add(LoadCart())),
+      ],
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+    return const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: ProductListScreen(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+// ─── Product List Screen ──────────────────────────────────────────────────────
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
-
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
-  }
+class ProductListScreen extends StatelessWidget {
+  const ProductListScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
+      backgroundColor: const Color(0xFF0A1628),
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        backgroundColor: const Color(0xFF0A1628),
+        title: const Text('Products', style: TextStyle(color: Colors.white)),
+        actions: [
+          BlocBuilder<CartBloc, CartState>(
+            builder: (context, state) {
+              int count = 0;
+              if (state is CartLoaded) count = state.items.length;
+              return Stack(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.shopping_cart, color: Colors.white,size: 30,),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const CartScreen()),
+                    ),
+                  ),
+                  if (count > 0)
+                    Positioned(
+                      right: 6,
+                      top: 1,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF378ADD),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          '$count',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
+      body: BlocBuilder<ProductBloc, ProductState>(
+        builder: (context, state) {
+          if (state is ProductLoading) {
+            return const Center(
+              child: CircularProgressIndicator(color: Color(0xFF378ADD)),
+            );
+          }
+          if (state is ProductError) {
+            return Center(
+              child: Text(state.message,
+                  style: const TextStyle(color: Colors.red)),
+            );
+          }
+          if (state is ProductLoaded) {
+            return GridView.builder(
+              padding: const EdgeInsets.all(16),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                childAspectRatio: 0.7,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+              ),
+              itemCount: state.products.length,
+              itemBuilder: (context, index) {
+                final product = state.products[index];
+                return GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ProductDetailScreen(product: product),
+                    ),
+                  ),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(16),
+                            ),
+                            child: Image.network(
+                              product.image,
+                              fit: BoxFit.contain,
+                              width: double.infinity,
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                product.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '\$${product.price}',
+                                style: const TextStyle(
+                                  color: Color(0xFF378ADD),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
+          }
+          return const SizedBox();
+        },
+      ),
+    );
+  }
+}
+
+// ─── Product Detail Screen ────────────────────────────────────────────────────
+
+class ProductDetailScreen extends StatelessWidget {
+  final Product product;
+  const ProductDetailScreen({super.key, required this.product});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0A1628),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0A1628),
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text(
+          product.category.toUpperCase(),
+          style: const TextStyle(color: Colors.white, fontSize: 14,fontWeight: FontWeight.bold),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('You have pushed the button this many times:'),
+            Container(
+              height: 280,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Image.network(product.image, fit: BoxFit.contain),
+              ),
+            ),
+            const SizedBox(height: 20),
             Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+              product.title,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '\$${product.price}',
+              style: const TextStyle(
+                color: Color(0xFF378ADD),
+                fontSize: 28,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              product.description,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.6),
+                fontSize: 14,
+                height: 1.6,
+              ),
+            ),
+            const SizedBox(height: 32),
+            BlocBuilder<CartBloc, CartState>(
+              builder: (context, state) {
+                bool inCart = false;
+                if (state is CartLoaded) {
+                  inCart = state.items.any((p) => p.id == product.id);
+                }
+                return SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: inCart
+                          ? Colors.red.withOpacity(0.8)
+                          : const Color(0xFF378ADD),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    onPressed: () {
+                      if (inCart) {
+                        context
+                            .read<CartBloc>()
+                            .add(RemoveFromCart(product.id));
+                      } else {
+                        context.read<CartBloc>().add(AddToCart(product));
+                      }
+                    },
+                    child: Text(
+                      inCart ? 'Remove from cart' : 'Add to cart',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+    );
+  }
+}
+
+// ─── Cart Screen ──────────────────────────────────────────────────────────────
+
+class CartScreen extends StatelessWidget {
+  const CartScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0A1628),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0A1628),
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: const Text('My Cart', style: TextStyle(color: Colors.white)),
+      ),
+      body: BlocBuilder<CartBloc, CartState>(
+        builder: (context, state) {
+          if (state is CartLoaded && state.items.isEmpty) {
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('🛒', style: TextStyle(fontSize: 64)),
+                  SizedBox(height: 16),
+                  Text(
+                    'Your cart is empty',
+                    style: TextStyle(color: Colors.white54, fontSize: 16),
+                  ),
+                ],
+              ),
+            );
+          }
+          if (state is CartLoaded) {
+            final total = state.items
+                .fold(0.0, (sum, item) => sum + item.price);
+            return Column(
+              children: [
+                Expanded(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: state.items.length,
+                    itemBuilder: (context, index) {
+                      final item = state.items[index];
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Row(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.network(
+                                item.image,
+                                width: 60,
+                                height: 60,
+                                fit: BoxFit.contain,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '\$${item.price}',
+                                    style: const TextStyle(
+                                      color: Color(0xFF378ADD),
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline,
+                                  color: Colors.red),
+                              onPressed: () => context
+                                  .read<CartBloc>()
+                                  .add(RemoveFromCart(item.id)),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.08),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(24),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Total',
+                        style: TextStyle(color: Colors.white, fontSize: 18),
+                      ),
+                      Text(
+                        '\$${total.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          color: Color(0xFF378ADD),
+                          fontSize: 24,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }
+          return const SizedBox();
+        },
       ),
     );
   }
