@@ -1,17 +1,25 @@
-# ecommerce_app
+# E-commerce App 🛒
 
-A new Flutter project.
+A multi-screen Flutter e-commerce app with product listing, detail view, and cart system.
+
+## Features
+- Product list fetched from FakeStore API
+- Product detail screen
+- Add/remove from cart
+- Cart persists after app restart with Hive
+- Clean dark UI
+
+## Tech Stack
+- Flutter & Dart
+- BLoC (state management)
+- Dio (HTTP client)
+- Hive (local storage)
 
 ## Getting Started
+```bash
+flutter pub get
+flutter run
+```
 
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Author
+Fortune Dev — [Watch Demo on YouTube](https://youtube.com/shorts/_pMOVNx7wGQ?si=yW_annrFw0x2FjgS)
